@@ -9,7 +9,8 @@ This is a fork from [this repo](https://github.com/carnager/buku_run) with some 
 Props to [carnager](https://github.com/carnager) for the amazing script. Make sure to check him out if you are interested in Rofi scripts as he has more of those.
 
 ## Screenshots
-![Screenshot](images/screenshot.jpg)
+
+![Screenshot2](images/screenshot2.png)
 
 ## Features
 * Adding bookmarks with tags
