@@ -1,235 +1,224 @@
 #!/usr/bin/env bash
 
+_buku () {
+    buku --nostdin "$@"
+}
+
 _rofi () {
-    rofi -dmenu -i -no-levenshtein-sort -width 1000 "$@"
+    rofi -dmenu -i -no-sort -theme-str 'mainbox { padding: 25% 5%;}' "$@"
 }
 
 # display settings
 display_type=1
 max_str_width=80
 
-# keybindings
-switch_view="Alt+Tab"
-new_bookmark="Alt+n"
-actions="Alt+a"
-edit="Alt+e"
-delete="Alt+d"
+# Keyboard shortcuts
+: ${KB_SWITCH_VIEW="Alt+Tab"}
+: ${KB_NEW_BOOKMARK="Alt+n"}
+: ${KB_ACTIONS="Alt+a"}
+: ${KB_EDIT="Alt+e"}
+: ${KB_DELETE="Alt+d"}
 
 # colors
-help_color="#334433"
+help_color="#FF00AA"
+# sources global and local config if those exist
+source_buku_config(){
+ [[ -f /etc/buku_run.config ]] && source /etc/buku_run.config
 
-# source global config
-if [[ -f /etc/buku_run.config ]]
-then
-  source /etc/buku_run.config
-fi
+ XDG_CONFIG_DIR=${XDG_CONFIG_DIR:-$HOME/.config}
 
-# source local config:
-if [[ -z $XDG_CONFIG_DIR ]]
-then
-  if [[ -f $HOME/.config/buku_run/config ]]
-  then
-    source $HOME/.config/buku_run/config
-  else
-    echo "User config file \'~/.config/buku_run/config\' not found. using global config"
-  fi
-else
-  if [[ -f "${XDG_CONFIG_DIR}/buku_run/config" ]]
-  then
-    source "${XDG_CONFIG_DIR}/buku_run/config"
-  else
-    echo "User config file \'~/.config/buku_run/config\' not found. using global config"
-  fi
-fi
+ [[ -f $XDG_CONFIG_DIR/buku_run/config ]] &&\
+   source $XDG_CONFIG_DIR/buku_run/config ||\
+   echo "User config file \'~/.config/buku_run/config\' not found. using global config"
+}
 
+on_bookmarks_enter(){
+  # select whether to open the bookmark or just type it
+  xdotool type --clearmodifiers -- "$(get_url_from_id $1)"
+}
 
 main () {
-    HELP="Welcome to Buku. Use <span color='${help_color}'>${new_bookmark}</span> to add a new Bookmark
-Use <span color='${help_color}'>${switch_view}</span> to switch View. <span color='${help_color}'>${actions}</span> for actions"
+
+    HELP="Welcome to Buku | Use <span color='${help_color}'>${KB_NEW_BOOKMARK}</span> to add a new Bookmark | Use <span color='${help_color}'>${KB_SWITCH_VIEW}</span> to switch View. | Use <span color='${help_color}'>${KB_ACTIONS}</span> for actions"
+
     if [[ $mode == "bookmarks" ]]; then
-        content=$(parseBuku)
-        menu=$(echo "${content}" | _rofi -p '> ' -filter "${filter}" -mesg "${HELP}" -kb-custom-1 "${new_bookmark}" -kb-custom-2 "${switch_view}" -kb-custom-3 "${actions}" -kb-custom-4 "${edit}" -kb-custom-5 "${delete}")
+        content=$(parse_buku)
+        menu=$(echo "${content}" | _rofi -p 'Bookmark' -filter "${filter}" -mesg "${HELP}" -kb-custom-1 "${KB_NEW_BOOKMARK}" -kb-custom-2 "${KB_SWITCH_VIEW}" -kb-custom-3 "${KB_ACTIONS}" -kb-custom-4 "${KB_EDIT}" -kb-custom-5 "${KB_DELETE}")
     elif [[ $mode == "tags" ]]; then
-        menu=$(buku --np --st | awk '{$NF=""; print $0}' | cut -d ' ' -f2-  | _rofi -p '> ' -mesg "${HELP}" -kb-custom-1 "${new_bookmark}" -kb-custom-2 "${switch_view}" -kb-custom-3 "${actions}" -kb-custom-4 "${edit}" -kb-custom-5 "${delete}")
+        menu=$(_buku --np --st | awk '{$NF=""; print $0}' | cut -d ' ' -f2-  | _rofi -p '> ' -mesg "${HELP}" -kb-custom-1 "${KB_NEW_BOOKMARK}" -kb-custom-2 "${KB_SWITCH_VIEW}" -kb-custom-3 "${KB_ACTIONS}" -kb-custom-4 "${KB_EDIT}" -kb-custom-5 "${KB_DELETE}")
     fi
+
     val=$?
-    if [[ $val -eq 1 ]]; then
-        exit
-    elif [[ $val -eq 12 ]]; then
-        optionsMenu
-    elif [[ $val -eq 10 ]]; then
-        addMark
-    elif [[ $val -eq 14 ]]; then
-        deleteMenu
-    elif [[ $val -eq 13 ]]; then
-        editMenu
-    elif [[ $val -eq 11 ]]; then
-        if [[ $mode == "bookmarks" ]]; then
-            export mode="tags"
-            mode=tags main
-        elif [[ $mode == "tags" ]]; then
-            export mode="bookmarks"
-            mode=bookmarks main
-        fi
-    elif [[ $val -eq 0 ]]; then
-        if [[ $mode == "bookmarks" ]]; then
-            id=$(getId "$content" "$menu")
-            for bm in ${id}; do
-                buku -o "${bm}"
-            done
-        elif [[ $mode == "tags" ]]; then
-            filter="${menu}" mode="bookmarks" main
-        fi
-    fi
+    case $val in
+        1) exit ;;
+        12) options_menu ;;
+        10) add_mark ;;
+        14) delete_menu ;;
+        13) edit_menu ;;
+        11)
+            if [[ $mode =~ (bookmarks|tags) ]]; then
+                export mode=$( [[ $mode == "bookmarks" ]] && echo "tags" || echo "bookmarks" )
+                mode=$mode main
+            fi
+            ;;
+        0)
+            if [[ $mode == "bookmarks" ]]; then
+                id=$(get_id "$content" "$menu")
+                for bm in ${id}; do
+                  on_bookmarks_enter $bm
+                done
+            elif [[ $mode == "tags" ]]; then
+                filter="${menu}" mode="bookmarks" main
+            fi
+            ;;
+    esac
 }
 
-optionsMenu () {
-    if [[ $mode == "bookmarks" ]]; then
+options_menu () {
+  case $mode in
+    bookmarks)
         askmenu=$(echo -e "< Return\n---\n1. Edit\n2. Delete" | _rofi -p '> ' -mesg "Choose Action for bookmark")
         val=$?
-        if [[ $val -eq 1 ]]; then
-            exit
-        elif [[ $val -eq 0 ]]; then
-            if [[ $askmenu == "< Return" ]]; then
-                export mode=bookmarks
-                main
-            elif [[ $askmenu == "1. Edit" ]]; then
-                editMenu
-            elif [[ $askmenu == "2. Delete" ]]; then
-                deleteMenu
-            fi
-        fi
-    elif [[ $mode == "tags" ]]; then
+        [[ $val -eq 1 ]] && exit
+        [[ $val -ne 0 ]] && exit
+
+        [[ "$askmenu" == "< Return" ]] && { export mode=bookmarks;main; }
+        [[ "$askmenu" == "1. Edit" ]] && { edit_menu; }
+        [[ "$askmenu" == "2. Delete" ]] && { delete_menu; }
+    ;;
+    tags)
         askmenu=$(echo -e "< Return\n---\n1. Replace Tag\n2. Delete Tag" | _rofi -p '> ' -mesg "Choose Action for tag \"${menu}\"")
         val=$?
-        if [[ $val -eq 1 ]]; then
-            exit
-        elif [[ $val -eq 0 ]]; then
-            if [[ $askmenu == "< Return" ]]; then
-                export mode=tags
-                main
-            elif [[ $askmenu == "1. Replace Tag" ]]; then
-                newtag=$(echo | _rofi -p '> ' -mesg "Enter new tag name for tag \"${menu}\"")
-                val=$?
-                if [[ $val -eq 1 ]]; then
-                    exit
-                elif [[ $val -eq 0 ]]; then
-                    if [[ $newtag == "" ]]; then
-                        mode=tags main
-                    else
-                        buku -r "${menu}" "${newtag}"
-                        mode=tags main
-                    fi
-                fi
-            elif [[ $askmenu == "2. Delete Tag" ]]; then
-                delask=$(echo -e "1. Yes\n2. No" | _rofi -p '> ' -mesg "Really delete tag?")
-                val=$?
-                if [[ $val -eq 1 ]]; then
-                    exit
-                elif [[ $val -eq 0 ]]; then
-                    if [[ $delask == "1. Yes" ]]; then
-                        buku -r "${menu}"
-                        mode=tags main
-                    elif [[ $delask == "2. No" ]]; then
-                        mode=tags main
-                    fi
-                fi
-            fi
-        fi
-    fi
+
+        [[ $val -eq 1 ]] && exit
+        [[ $val -ne 0 ]] && exit
+
+        [[ $askmenu == "< Return" ]] && export mode=tags;main
+
+        case $askmenu in
+        "1. Replace Tag")
+            newtag=$(echo | _rofi -p '> ' -mesg "Enter new tag name for tag \"${menu}\"")
+            val=$?
+            [[ $val -eq 1 ]] && exit
+            [[ $val -ne 0 ]] && exit
+
+            [[ $newtag == "" ]] &&\
+               mode=tags main ||\
+               _buku -r "${menu}" "${newtag}";mode=tags main
+            ;;
+          "2. Delete Tag")
+            delask=$(echo -e "1. Yes\n2. No" | _rofi -p '> ' -mesg "Really delete tag?")
+            val=$?
+            [[ $val -eq 1 ]] && exit
+            [[ $val -ne 0 ]] && exit
+
+            [[ $delask == "1. Yes" ]] &&\
+               _buku -r "${menu}";mode=tags main ||\
+               mode=tags main
+            ;;
+        esac
+    ;;
+  esac
 }
 
-deleteMenu () {
-    id=$(getId "$content" "$menu")
+delete_menu () {
+    id=$(get_id "$content" "$menu")
     delask=$(echo -e "1. Yes\n2. No" | _rofi -p '> ' -mesg "Really delete bookmark?")
     val=$?
     if [[ $val -eq 1 ]]; then
         exit
     elif [[ $val -eq 0 ]]; then
         if [[ $delask == "1. Yes" ]]; then
-            buku -d ${id} --tacit
+            _buku -d ${id} --tacit
             mode=bookmarks main
         elif [[ $delask == "2. No" ]]; then
-            optionsMenu
+            options_menu
         fi
     fi
 }
 
-editMenu () {
-    id=$(getId "$content" "$menu")
-    title="$(getTitleFromId $id)"
-    bookmark="$(getUrlFromId $id)"
-    tags="$(getTagsFromId $id)"
+edit_menu () {
+    id=$(get_id "$content" "$menu")
+    title="$(get_title_from_id $id)"
+    bookmark="$(get_url_from_id $id)"
+    tags="$(get_tags_from_id $id)"
     content=$(echo -e "1. title: $title\n2. url: $bookmark\n3. tags: $tags")
     editmenu=$(echo -e "< Return\n---\n${content}" | _rofi -p '> ')
     val=$?
-    if [[ $val -eq 1 ]]; then
-        exit
-    elif [[ $val -eq 0 ]]; then
-        if [[ $editmenu == "< Return" ]]; then
-            main
-        elif [[ $editmenu == "tags: NOTAG" ]]; then
-            addTags --update
-        elif [[ $editmenu =~ tags:* ]]; then
-            tags="${tags}" editTags
-        elif [[ $editmenu =~ url:* ]]; then
-            editBookmark
-        elif [[ $editmenu =~ title:* ]]; then
-            editTitle
-        fi
-    fi
+    [[ $val -eq 1 ]] && exit
+    [[ $val -ne 0 ]] && exit
+
+    case $editmenu in
+      "< Return")
+        main
+        ;;
+      "tags: NOTAG")
+        add_tags --update
+        ;;
+      3\.\ tags:*)
+        tags="${tags}" edit_tags
+        ;;
+      2\.\ url:*)
+        edit_bookmark
+        ;;
+      1\.\ title:*)
+        edit_title
+        ;;
+      *)
+        ;;
+    esac
 }
 
-editTags () {
+edit_tags () {
     edittagsmenu=$(echo | _rofi -filter "${tags}" -p '> ' -mesg "Edit Tags and hit Enter")
     val=$?
     if [[ $val -eq 1 ]]; then
         exit
     elif [[ $val -eq 0 ]]; then
-        buku -u ${id} --tag "${edittagsmenu}"
+        _buku -u ${id} --tag "${edittagsmenu}"
     fi
     mode=bookmarks main
 }
 
-editBookmark () {
+edit_bookmark () {
     bmarkmenu=$(echo "" | _rofi -p "> " -filter "${bookmark}" -mesg "Edit Bookmark and hit Enter")
     val=$?
     if [[ $val -eq 1 ]]; then
         exit
     elif [[ $val -eq 0 ]]; then
         if [[ $bmarkmenu == "http"* ]]; then
-            buku -u "${id}" --url "${bmarkmenu}"
+            _buku -u "${id}" --url "${bmarkmenu}"
         else
             echo "" | rofi -e "Not a valid URI, Make sure URLs start with http"
-            editBookmark
+            edit_bookmark
         fi
     fi
     mode=bookmarks main
 }
 
-editTitle () {
+edit_title () {
   titlemenu=$(echo "" | _rofi -p "> " -filter "${title}" -mesg "Edit Title and hit Enter")
   val=$?
   if [[ $val -eq 1 ]]; then
     exit
   elif [[ $val -eq 0 ]]; then
-    buku -u "${id}" --title "${titlemenu}"
+    _buku -u "${id}" --title "${titlemenu}"
   fi
   mode=bookmarks main
 }
 
-addMark () {
+add_mark () {
     inserturl=$(echo -e "$(xclip -o)" | _rofi -p '> ' -mesg "Use URL below or type manually")
     val=$?
     if [[ $val -eq 1 ]]; then
         exit
     elif [[ $val -eq 0 ]]; then
-        addTags
+        add_tags
     fi
 }
 
-addTags () {
-    inserttags=$(buku --np --st | awk '{$NF=""; print $0}' | cut -d ' ' -f2- | _rofi -p '> ' -mesg "Add some tags. Separate tags with ', '")
+add_tags () {
+    inserttags=$(_buku --np --st | awk '{$NF=""; print $0}' | cut -d ' ' -f2- | _rofi -p '> ' -mesg "Add some tags. Separate tags with ', '")
     val=$?
     if [[ $val -eq 1 ]]; then
         exit
@@ -244,39 +233,18 @@ addTags () {
             tags=${inserttags}
         fi
         if [[ $1 == "--update" ]]; then
-            buku -u "${id}" --tag ${tags}
+            _buku -u "${id}" --tag ${tags}
         else
-            buku -a ${inserturl} ${tags}
+            _buku -a ${inserturl} ${tags}
         fi
     fi
 }
 
-parseBuku () {
-  echo "$(buku --nc -p | gawk -v max="$max_str_width" -v type="$display_type" '
-BEGIN {
-  RS=""
-  FS="\n"
-}
-{
-  if ($3 == "")
-    $3 = " # NOTAG"
-  id = gensub(/([0-9]+)\.(.*)/, "\\1", "g", $1)
-  url = substr(gensub(/\s+> (.*)/, "\\1", "g", $2),0,max)
-  tags = gensub(/\s+# (.*)/, "\\1", "g", $3)
-  title = substr(gensub(/[0-9]+\.\s*(.*)/, "\\1", "g", $1),0,max)
-
-  if (type == 1)
-    print id "\t" url "\t" tags
-  else
-    print id "\t" title "\t" tags
-    if (type == 3)
-      print " \t" url "\t "
-  print ""
-}
-' | column -t -s $'\t')"
+parse_buku () {
+  _buku --nc -p -j 2>/dev/null | jq -r '.[] | "\(.index)	\(if .uri | length <= 80 then .uri else .uri[:80] + "..." end)	\(.title)	\(.tags | select(. != "") // "NOTAGS")"' | column -s $'	' -t
 }
 
-getId () {
+get_id () {
   id=$(echo "${2%% *}")
   if [ -z "$id" ]; then
     prev=""
@@ -293,40 +261,17 @@ getId () {
   echo $id
 }
 
-getTitleFromId () {
-  echo "$(buku --nc -p $1 | gawk '
-  BEGIN {
-    RS=""
-    FS="\n"
-  }
-  {
-    print gensub(/[0-9]+\.\s*(.*)/, "\\1", "g", $1)
-  }
-  ')"
+get_title_from_id () {
+  echo "$(_buku --nc -p $1 -f 30)"
 }
 
-getUrlFromId () {
-  echo "$(buku --nc -p $1 | gawk '
-  BEGIN {
-    RS=""
-    FS="\n"
-  }
-  {
-    print gensub(/\s+> (.*)/, "\\1", "g", $2)
-  }
-  ')"
+get_url_from_id () {
+  echo "$(_buku --nc -p $1 -f 10)"
 }
 
-getTagsFromId () {
-  echo "$(buku --nc -p $1 | gawk '
-  BEGIN {
-    RS=""
-    FS="\n"
-  }
-  {
-    print gensub(/\s+# (.*)/, "\\1", "g", $3)
-  }
-  ')"
+get_tags_from_id () {
+  echo "$(_buku --nc -p $1 -j | jq -r .tags)"
 }
 
+source_buku_config
 mode=bookmarks main
